@@ -1,5 +1,5 @@
 import { normalizeManufacturer } from "./normalize.js";
-import { enrichGroup } from "./gemini.js";
+import { enrichGroup } from "./api.js";
 
 // Group rows by canonical (manufacturer, model). Returns array of:
 //   { key, manufacturer, model, serials:Set<string>, rows:[idx...] }
@@ -39,7 +39,7 @@ async function runPool(items, limit, worker) {
 
 // Main pipeline. Mutates a copy of rows with manufactured_date + device_type.
 // onProgress({done, total, label}) reports per-group progress.
-export async function enrichRows(rows, apiKey, { concurrency = 4, onProgress, signal } = {}) {
+export async function enrichRows(rows, { concurrency = 4, onProgress, signal } = {}) {
   const out = rows.map((r) => ({
     ...r,
     manufacturer: normalizeManufacturer(r.manufacturer),
@@ -56,7 +56,6 @@ export async function enrichRows(rows, apiKey, { concurrency = 4, onProgress, si
     try {
       const serials = [...group.serials];
       const { device_type, bySerial } = await enrichGroup(
-        apiKey,
         group.manufacturer,
         group.model,
         serials,

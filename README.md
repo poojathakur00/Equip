@@ -82,3 +82,68 @@ one (temperature 0).
 - Switch models by changing `MODEL` in `gemini.js` (e.g. to a more capable
   model for higher accuracy).
 - All processing is client-side; no backend.
+
+---
+
+## Backend & caching (current implementation)
+
+A Node/Express backend with Postgres caches Gemini responses by `(manufacturer, model)` group. On repeat uploads, cached groups skip the Gemini call entirely — only new groups hit the API.
+
+```
+Upload CSV
+   └─ parse + normalize (frontend, unchanged)
+        └─ POST /api/enrich  { groups: [{manufacturer, model, serials[]}] }
+             └─ for each group:
+                  ├─ cache hit  → return stored device_type + per-serial dates
+                  └─ cache miss → call Gemini → store result → return
+        └─ merge results onto rows → export CSV
+```
+
+**DB schema (Postgres):**
+
+```sql
+-- One row per unique (manufacturer, model). Populated on first Gemini call.
+device_groups (manufacturer, model, device_type, serial_format, created_at)
+
+-- One row per unique serial number seen. Avoids re-decoding the same serial.
+serial_cache  (manufacturer, model, serial_number, manufactured_date, confidence, created_at)
+```
+
+`serial_format` stores Gemini's natural-language description of the serial encoding
+(e.g. `"characters 3-4 = YY, 5-6 = week number"`). It is included as grounding context
+in future Gemini calls for the same group, improving consistency.
+
+---
+
+## High-accuracy pipeline (if manufacturer manuals are available)
+
+> **Not implemented.** Documented here for future reference if medical-grade accuracy is required.
+
+When the client provides original manufacturer service manuals, Gemini's general knowledge
+can be replaced with rules extracted directly from those documents. Accuracy becomes
+deterministic rather than probabilistic.
+
+**Pipeline:**
+
+```
+Manufacturer service manuals (PDF)
+   └─ Structure-aware PDF parser (e.g. Unstructured.io)
+        └─ Identify serial-number / date-code sections
+             └─ Index only those sections → pgvector (stored in same Postgres DB)
+                  └─ On first encounter for a (manufacturer, model):
+                       ├─ Hybrid retrieval: BM25 keyword + vector semantic search
+                       ├─ Reranker selects best chunks
+                       ├─ LLM extracts structured rule from retrieved text
+                       ├─ Human verifies rule + cites source page
+                       └─ Store verified rule → deterministic decoding thereafter (no LLM)
+                  └─ Fallback for unverified groups → Gemini (current approach, low confidence)
+```
+
+**Why RAG over a fine-tuned SLM:**
+- Rules come from retrieved document text, not model weights — no cross-manufacturer bleed
+- Auditable: every rule cites the source document and page number (required for medical compliance)
+- Updatable: add a new manual to the vector store without retraining
+- Deterministic decoding after rule verification — zero hallucination at inference time
+
+**Confidence** becomes binary once a rule is verified: the serial either matches the rule pattern or it doesn't.
+Unverified groups retain the `high / medium / low` Gemini flag and are queued for manual review.

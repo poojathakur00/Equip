@@ -11,7 +11,6 @@ const STAGES = {
 };
 
 export default function App() {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
   const [rows, setRows] = useState([]);
   const [enriched, setEnriched] = useState([]);
   const [stage, setStage] = useState(STAGES.IDLE);
@@ -50,16 +49,12 @@ export default function App() {
   }
 
   async function handleRun() {
-    if (!apiKey.trim()) {
-      alert("Missing VITE_GEMINI_API_KEY — add it to your .env file and restart the dev server.");
-      return;
-    }
     setStage(STAGES.RUNNING);
     setProgress({ done: 0, total: groupCount, label: "" });
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      const result = await enrichRows(rows, apiKey, {
+      const result = await enrichRows(rows, {
         concurrency: 4,
         signal: controller.signal,
         onProgress: setProgress,
